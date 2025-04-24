@@ -1,0 +1,9 @@
+[package]
+name = "bear_flag"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = "0.25.2"
+usvg = "0.45"
+resvg = { version = "0.45.1" }
