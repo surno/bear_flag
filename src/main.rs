@@ -13,6 +13,8 @@ const PALETTE: [u32; 14] = [
     0x4D0509, 0x380605, 0x290A06, 0x1C0808, 0x150705,
 ];
 
+const SMOOTH_WIDTH: u32 = 16; // pixels over which adjacent bars blend
+
 fn get_svg_as_rgba(svg_data: &[u8], target_size: u32) -> Result<RgbaImage, Error> {
     let tree = usvg::Tree::from_data(svg_data, &usvg::Options::default())
         .map_err(|_| Error::new(ErrorKind::Other, "Failed to parse SVG"))?;
@@ -37,17 +39,52 @@ fn get_svg_as_rgba(svg_data: &[u8], target_size: u32) -> Result<RgbaImage, Error
     Ok(svg_image)
 }
 
+// Linear‑interpolate two u8 channel values
+fn lerp(a: u8, b: u8, t: f32) -> u8 {
+    ((1.0 - t) * a as f32 + t * b as f32).round() as u8
+}
+
 fn draw_bear_flag(img: &mut RgbaImage, palette: &[u32], stripe: u32, h: u32) {
     for (i, &hex) in palette.iter().enumerate() {
-        let rgb = Rgba([
+        let next_hex = if i + 1 < palette.len() {
+            palette[i + 1]
+        } else {
+            hex
+        };
+
+        let rgb_cur = [
             ((hex >> 16) & 0xFF) as u8,
             ((hex >> 8) & 0xFF) as u8,
             (hex & 0xFF) as u8,
-            255,
-        ]);
-        for x in i as u32 * stripe..(i as u32 + 1) * stripe {
+        ];
+        let rgb_next = [
+            ((next_hex >> 16) & 0xFF) as u8,
+            ((next_hex >> 8) & 0xFF) as u8,
+            (next_hex & 0xFF) as u8,
+        ];
+
+        let x_start = i as u32 * stripe;
+        let x_end = (i as u32 + 1) * stripe; // exclusive RHS
+
+        for x in x_start..x_end {
+            // distance from the right boundary of this bar
+            let dist_right = x_end - 1 - x;
+            // t goes 0→1 over the last SMOOTH_WIDTH px
+            let t = if dist_right < SMOOTH_WIDTH && i + 1 < palette.len() {
+                1.0 - (dist_right as f32) / (SMOOTH_WIDTH as f32)
+            } else {
+                0.0
+            };
+
+            let blended = Rgba([
+                lerp(rgb_cur[0], rgb_next[0], t),
+                lerp(rgb_cur[1], rgb_next[1], t),
+                lerp(rgb_cur[2], rgb_next[2], t),
+                255,
+            ]);
+
             for y in 0..h {
-                img.put_pixel(x, y, rgb);
+                img.put_pixel(x, y, blended);
             }
         }
     }
