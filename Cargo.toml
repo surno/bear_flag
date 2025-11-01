@@ -4,9 +4,24 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Image processing - existing dependencies
 image = "=0.25.2"
 usvg = "=0.45.0"
 resvg = { version = "=0.45.0" }
 thiserror = "=1.0.69"
-clap = { version = "=4.5.20", features = ["derive"] }
-indicatif = "=0.17.9"
+
+# Web server framework - Axum with JSON support
+axum = { version = "=0.7.9", features = ["macros"] }
+# Async runtime - Required for Axum
+tokio = { version = "=1.42.0", features = ["full"] }
+# Serialization/deserialization - For API request/response models
+serde = { version = "=1.0.215", features = ["derive"] }
+serde_json = "=1.0.133"
+# Structured logging - Production-ready tracing
+tracing = "=0.1.41"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter"] }
+# HTTP types
+tower = { version = "=0.5.2", features = ["util"] }
+tower-http = { version = "=0.6.2", features = ["trace", "cors"] }
+# Validation - For input validation (using 0.16 for Rust 1.82 compatibility)
+validator = { version = "=0.16.1", features = ["derive"] }
