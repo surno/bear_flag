@@ -1,8 +1,8 @@
-//! Gay Bear Flag API Service
+//! Pride Flag API Service
 //!
-//! Axum web service that generates high-quality gay bear pride flags with smooth
-//! color gradients and a centered bear paw overlay. The flag combines the traditional
-//! bear pride colors with proper alpha compositing for professional results.
+//! Axum web service that generates high-quality pride flags with smooth color gradients.
+//! Supports various pride flag presets (rainbow, trans, bi, pan, bear, etc.) or custom colors
+//! and stripe counts. Bear pride flags can optionally include a centered bear paw overlay.
 
 mod constants;
 mod flag;

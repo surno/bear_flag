@@ -38,37 +38,50 @@ impl IntoResponse for FlagError {
     }
 }
 
-/// GET /flag - Generate bear pride flag with query parameters
+/// GET /flag - Generate pride flag with query parameters
 ///
 /// Query Parameters:
+/// - flag_preset: Pride flag preset (e.g., "rainbow", "bear", "trans", "bi", "pan")
+/// - colors: Custom colors as comma-separated hex (e.g., "FF0000,00FF00,0000FF") - overrides flag_preset
+/// - stripe_count: Number of stripes (1-50) - repeats/truncates colors if needed
 /// - preset: Device preset (e.g., "desktop-4k", "iphone-14-pro-max")
 /// - width: Custom width in pixels (overrides preset)
 /// - height: Custom height in pixels (overrides preset)
 /// - format: Output format (png, jpeg, webp) - default: png
 /// - paw_size: Paw size ratio 0.01-1.0 - default: 0.35
 /// - center_paw: Center the paw (true/false) - default: true
+/// - include_paw: Include bear paw overlay (true/false) - default: auto-based on flag_preset
 /// - transparent: Use transparent background (true/false) - default: false
 #[tracing::instrument(skip_all, fields(
+    flag_preset = ?query.flag_preset,
     width = ?query.width.or_else(|| query.preset.map(|p| p.into()).map(|(w, _)| w)),
     height = ?query.height.or_else(|| query.preset.map(|p| p.into()).map(|(_, h)| h)),
     format = ?query.format
 ))]
 pub async fn generate_flag_handler(Query(query): Query<FlagQuery>) -> Result<Response, FlagError> {
+    // Resolve colors from query parameters
+    let colors = query.resolve_colors()?;
+    let include_paw = query.should_include_paw();
+
     // Build configuration from query params
     let mut config = if let (Some(width), Some(height)) = (query.width, query.height) {
         FlagConfig {
             width,
             height,
             output_format: query.format,
+            colors,
             paw_size_ratio: query.paw_size,
             center_paw: query.center_paw,
+            include_paw,
             transparent: query.transparent,
         }
     } else if let Some(preset) = query.preset {
         let mut config = FlagConfig::from_preset(preset);
         config.output_format = query.format;
+        config.colors = colors;
         config.paw_size_ratio = query.paw_size;
         config.center_paw = query.center_paw;
+        config.include_paw = include_paw;
         config.transparent = query.transparent;
         config
     } else {
@@ -77,8 +90,10 @@ pub async fn generate_flag_handler(Query(query): Query<FlagQuery>) -> Result<Res
             width: 3840,
             height: 2160,
             output_format: query.format,
+            colors,
             paw_size_ratio: query.paw_size,
             center_paw: query.center_paw,
+            include_paw,
             transparent: query.transparent,
         }
     };
@@ -90,8 +105,16 @@ pub async fn generate_flag_handler(Query(query): Query<FlagQuery>) -> Result<Res
     }
 
     info!(
-        "Generating {}x{} flag in {:?} format",
-        config.width, config.height, config.output_format
+        "Generating {}x{} flag with {} stripes in {:?} format{}",
+        config.width,
+        config.height,
+        config.colors.len(),
+        config.output_format,
+        if config.include_paw {
+            " (with paw)"
+        } else {
+            ""
+        }
     );
 
     let bytes = generate_flag_bytes(&config)?;

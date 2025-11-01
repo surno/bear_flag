@@ -1,6 +1,6 @@
 //! Core flag generation logic
 
-use crate::constants::{BEAR_PALETTE, BEAR_PAW_SVG};
+use crate::constants::BEAR_PAW_SVG;
 use crate::rendering::{composite_with_alpha, draw_bear_stripes, render_svg_to_rgba};
 use crate::types::{FlagConfig, FlagError, OutputFormat};
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
@@ -29,25 +29,28 @@ pub fn generate_flag_bytes(config: &FlagConfig) -> Result<Vec<u8>, FlagError> {
         RgbaImage::new(config.width, config.height)
     };
 
-    let stripe_width = config.width / BEAR_PALETTE.len() as u32;
-    draw_bear_stripes(&mut img, &BEAR_PALETTE, stripe_width, config.height);
+    let stripe_width = config.width / config.colors.len() as u32;
+    draw_bear_stripes(&mut img, &config.colors, stripe_width, config.height);
 
-    let paw_size = (config.height as f32 * config.paw_size_ratio) as u32;
-    let bear_paw = render_svg_to_rgba(BEAR_PAW_SVG, paw_size)?;
+    // Add bear paw overlay if requested
+    if config.include_paw {
+        let paw_size = (config.height as f32 * config.paw_size_ratio) as u32;
+        let bear_paw = render_svg_to_rgba(BEAR_PAW_SVG, paw_size)?;
 
-    let (paw_x, paw_y) = if config.center_paw {
-        // Center the paw in the flag
-        let x = (config.width.saturating_sub(bear_paw.width())) / 2;
-        let y = (config.height.saturating_sub(bear_paw.height())) / 2;
-        (x, y)
-    } else {
-        // Bottom-left positioning (classic)
-        let x = 0;
-        let y = config.height.saturating_sub(bear_paw.height());
-        (x, y)
-    };
+        let (paw_x, paw_y) = if config.center_paw {
+            // Center the paw in the flag
+            let x = (config.width.saturating_sub(bear_paw.width())) / 2;
+            let y = (config.height.saturating_sub(bear_paw.height())) / 2;
+            (x, y)
+        } else {
+            // Bottom-left positioning (classic)
+            let x = 0;
+            let y = config.height.saturating_sub(bear_paw.height());
+            (x, y)
+        };
 
-    composite_with_alpha(&mut img, &bear_paw, paw_x, paw_y);
+        composite_with_alpha(&mut img, &bear_paw, paw_x, paw_y);
+    }
 
     // Encode to bytes
     let format: ImageFormat = config.output_format.into();
@@ -80,12 +83,15 @@ mod tests {
 
     #[test]
     fn test_generate_flag_bytes_small() {
+        use crate::types::BEAR_PALETTE;
         let config = FlagConfig {
             width: 140,
             height: 80,
             output_format: OutputFormat::Png,
+            colors: BEAR_PALETTE.to_vec(),
             paw_size_ratio: 0.3,
             center_paw: true,
+            include_paw: true,
             transparent: false,
         };
 
@@ -98,12 +104,15 @@ mod tests {
 
     #[test]
     fn test_generate_flag_bytes_jpeg() {
+        use crate::types::BEAR_PALETTE;
         let config = FlagConfig {
             width: 320,
             height: 240,
             output_format: OutputFormat::Jpeg,
+            colors: BEAR_PALETTE.to_vec(),
             paw_size_ratio: 0.3,
             center_paw: true,
+            include_paw: true,
             transparent: false,
         };
 
