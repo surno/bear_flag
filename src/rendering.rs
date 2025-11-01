@@ -57,7 +57,7 @@ pub fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
     ((1.0 - t).mul_add(a as f32, t * b as f32)).round() as u8
 }
 
-/// Draws the bear pride flag with smooth color transitions
+/// Draws pride flag stripes with smooth color transitions
 ///
 /// Creates horizontal stripes from the given palette with smooth gradients
 /// between adjacent colors for a professional appearance.
@@ -66,11 +66,48 @@ pub fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
 ///
 /// * `img` - Target image buffer to draw into
 /// * `palette` - Array of RGB colors as u32 hex values (0xRRGGBB)
-/// * `stripe_width` - Width of each color stripe in pixels
+/// * `stripe_count` - Number of stripes to draw (may be different from palette length)
+/// * `width` - Width of the flag in pixels
 /// * `height` - Height of the flag in pixels
-pub fn draw_bear_stripes(img: &mut RgbaImage, palette: &[u32], stripe_width: u32, height: u32) {
-    for (i, &hex) in palette.iter().enumerate() {
-        let next_hex = palette.get(i + 1).copied().unwrap_or(hex);
+pub fn draw_flag_stripes(
+    img: &mut RgbaImage,
+    palette: &[u32],
+    stripe_count: u32,
+    width: u32,
+    height: u32,
+) {
+    if palette.is_empty() || stripe_count == 0 {
+        return;
+    }
+
+    let stripe_width = width / stripe_count;
+
+    // If stripe_count > palette.len(), repeat palette colors
+    // If stripe_count < palette.len(), sample evenly from palette
+    for i in 0..stripe_count {
+        let palette_idx = if palette.len() == 1 {
+            0
+        } else {
+            // Map stripe index to palette index evenly
+            (i as usize * (palette.len() - 1)) / (stripe_count as usize - 1).max(1)
+        };
+        let palette_idx = palette_idx.min(palette.len() - 1);
+        let hex = palette[palette_idx];
+
+        // Get next color for blending
+        let next_palette_idx = if i + 1 < stripe_count {
+            let next_stripe_idx = i + 1;
+            if palette.len() == 1 {
+                0
+            } else {
+                (next_stripe_idx as usize * (palette.len() - 1))
+                    / (stripe_count as usize - 1).max(1)
+            }
+            .min(palette.len() - 1)
+        } else {
+            palette_idx
+        };
+        let next_hex = palette[next_palette_idx];
 
         let rgb_cur = [
             ((hex >> 16) & 0xFF) as u8,
@@ -83,14 +120,14 @@ pub fn draw_bear_stripes(img: &mut RgbaImage, palette: &[u32], stripe_width: u32
             (next_hex & 0xFF) as u8,
         ];
 
-        let x_start = i as u32 * stripe_width;
-        let x_end = ((i + 1) as u32 * stripe_width).min(img.width());
+        let x_start = i * stripe_width;
+        let x_end = ((i + 1) * stripe_width).min(width);
 
         for x in x_start..x_end {
             let dist_from_end = x_end.saturating_sub(x + 1);
 
             // Smooth blending in the last SMOOTH_WIDTH pixels if not the last stripe
-            let blend_factor = if dist_from_end < SMOOTH_WIDTH && i + 1 < palette.len() {
+            let blend_factor = if dist_from_end < SMOOTH_WIDTH && i + 1 < stripe_count {
                 1.0 - (dist_from_end as f32 / SMOOTH_WIDTH as f32)
             } else {
                 0.0
