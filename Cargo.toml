@@ -4,9 +4,26 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Image processing - for flag generation
 image = "=0.25.2"
+# SVG rendering - for bear paw overlay
 usvg = "=0.45.0"
 resvg = { version = "=0.45.0" }
+# Error handling - structured error types with context
 thiserror = "=1.0.69"
-clap = { version = "=4.5.20", features = ["derive"] }
-indicatif = "=0.17.9"
+
+# Web framework - Axum for REST API with tokio async runtime
+axum = { version = "=0.7.9", features = ["macros"] }
+# Async runtime - required by Axum for async/await support
+tokio = { version = "=1.41.1", features = ["full"] }
+# HTTP types - status codes and header management
+http = "=1.1.0"
+# Serialization - JSON request/response handling
+serde = { version = "=1.0.215", features = ["derive"] }
+serde_json = "=1.0.133"
+# Tower middleware - HTTP service layers for timeouts, tracing
+tower = { version = "=0.5.2", features = ["timeout", "limit"] }
+tower-http = { version = "=0.6.2", features = ["trace", "cors"] }
+# Structured logging - request tracing and diagnostics
+tracing = "=0.1.41"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter"] }
