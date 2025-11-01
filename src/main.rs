@@ -1,17 +1,26 @@
-//! Gay Bear Flag Generator
+//! Gay Bear Flag Generator API
 //!
-//! Generates a high-quality gay bear pride flag with smooth color gradients
-//! and a centered bear paw overlay. The flag combines the traditional bear
-//! pride colors with proper alpha compositing for professional results.
+//! Axum web service that generates high-quality gay bear pride flags with smooth
+//! color gradients and a centered bear paw overlay via HTTP API.
 
-use clap::{Parser, ValueEnum};
-use image::{ImageBuffer, ImageFormat, Rgba, RgbaImage};
-use indicatif::{ProgressBar, ProgressStyle};
+use axum::{
+    extract::Query,
+    http::{header, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
+use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba, RgbaImage};
 use resvg::tiny_skia::Pixmap;
 use resvg::usvg;
 use resvg::usvg::Transform;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
+use tower::ServiceBuilder;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+use tracing::info;
 
 /// Embeds assets/bear_paw.svg directly into the binary
 const BEAR_PAW_SVG: &[u8] = include_bytes!("assets/bear_paw.svg");
@@ -27,43 +36,44 @@ const BEAR_PALETTE: [u32; 14] = [
 const SMOOTH_WIDTH: u32 = 16;
 
 /// Preset device configurations with appropriate dimensions for wallpapers
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DevicePreset {
     /// iPhone 14/13/12 Pro Max - 2796 x 1290 (landscape)
-    #[value(name = "iphone-14-pro-max")]
+    #[serde(rename = "iphone-14-pro-max")]
     IPhone14ProMax,
     /// iPhone 14/13/12 Pro - 2556 x 1179 (landscape)
-    #[value(name = "iphone-14-pro")]
+    #[serde(rename = "iphone-14-pro")]
     IPhone14Pro,
     /// iPhone 14/13/12 - 2532 x 1170 (landscape)
-    #[value(name = "iphone-14")]
+    #[serde(rename = "iphone-14")]
     IPhone14,
     /// iPhone SE (3rd gen) - 1334 x 750 (landscape)
-    #[value(name = "iphone-se")]
+    #[serde(rename = "iphone-se")]
     IPhoneSE,
     /// iPad Pro 12.9" - 2732 x 2048 (landscape)
-    #[value(name = "ipad-pro-12.9")]
+    #[serde(rename = "ipad-pro-12.9")]
     IPadPro129,
     /// iPad Pro 11" - 2388 x 1668 (landscape)
-    #[value(name = "ipad-pro-11")]
+    #[serde(rename = "ipad-pro-11")]
     IPadPro11,
     /// iPad Air 10.9" - 2360 x 1640 (landscape)
-    #[value(name = "ipad-air")]
+    #[serde(rename = "ipad-air")]
     IPadAir,
     /// Android QHD - 2560 x 1440
-    #[value(name = "android-qhd")]
+    #[serde(rename = "android-qhd")]
     AndroidQHD,
     /// Android FHD - 1920 x 1080
-    #[value(name = "android-fhd")]
+    #[serde(rename = "android-fhd")]
     AndroidFHD,
     /// Desktop 4K - 3840 x 2160
-    #[value(name = "desktop-4k")]
+    #[serde(rename = "desktop-4k")]
     Desktop4K,
     /// Desktop 1440p - 2560 x 1440
-    #[value(name = "desktop-1440p")]
+    #[serde(rename = "desktop-1440p")]
     Desktop1440p,
     /// Desktop 1080p - 1920 x 1080
-    #[value(name = "desktop-1080p")]
+    #[serde(rename = "desktop-1080p")]
     Desktop1080p,
 }
 
@@ -278,14 +288,7 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
 /// * `palette` - Array of RGB colors as u32 hex values (0xRRGGBB)
 /// * `stripe_width` - Width of each color stripe in pixels
 /// * `height` - Height of the flag in pixels
-/// * `pb` - Optional progress bar to update
-fn draw_bear_stripes(
-    img: &mut RgbaImage,
-    palette: &[u32],
-    stripe_width: u32,
-    height: u32,
-    pb: Option<&ProgressBar>,
-) {
+fn draw_bear_stripes(img: &mut RgbaImage, palette: &[u32], stripe_width: u32, height: u32) {
     for (i, &hex) in palette.iter().enumerate() {
         let next_hex = palette.get(i + 1).copied().unwrap_or(hex);
 
@@ -323,10 +326,6 @@ fn draw_bear_stripes(
             for y in 0..height {
                 img.put_pixel(x, y, blended);
             }
-        }
-
-        if let Some(progress) = pb {
-            progress.inc(1);
         }
     }
 }
@@ -372,31 +371,22 @@ fn composite_with_alpha(dst: &mut RgbaImage, src: &RgbaImage, offset_x: u32, off
     }
 }
 
-/// Generates the complete gay bear pride flag
+/// Generates the complete gay bear pride flag and returns it as image bytes
 ///
 /// Creates a flag with smooth color transitions and a bear paw overlay,
-/// saving the result to the configured output path.
+/// returning the image as bytes in the specified format.
 ///
 /// # Arguments
 ///
-/// * `config` - Configuration specifying dimensions, output path, and styling
+/// * `config` - Configuration specifying dimensions, format, and styling
 ///
 /// # Errors
 ///
 /// Returns errors if SVG rendering fails, image buffer creation fails,
-/// or the image cannot be saved to the output path.
-pub fn generate_flag(config: &FlagConfig) -> Result<(), FlagError> {
+/// or the image cannot be encoded.
+pub fn generate_flag_bytes(config: &FlagConfig) -> Result<Vec<u8>, FlagError> {
     config.validate()?;
 
-    let pb = ProgressBar::new(100);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)")
-            .unwrap(),
-    );
-    pb.set_message("Initializing...");
-
-    pb.set_message("Creating image buffer...");
     let mut img = if config.transparent {
         // Initialize with transparent background
         RgbaImage::from_pixel(config.width, config.height, Rgba([0, 0, 0, 0]))
@@ -405,22 +395,12 @@ pub fn generate_flag(config: &FlagConfig) -> Result<(), FlagError> {
         RgbaImage::new(config.width, config.height)
     };
 
-    pb.set_message("Drawing stripes...");
-    pb.set_length(BEAR_PALETTE.len() as u64);
     let stripe_width = config.width / BEAR_PALETTE.len() as u32;
-    draw_bear_stripes(
-        &mut img,
-        &BEAR_PALETTE,
-        stripe_width,
-        config.height,
-        Some(&pb),
-    );
+    draw_bear_stripes(&mut img, &BEAR_PALETTE, stripe_width, config.height);
 
-    pb.set_message("Rendering bear paw...");
     let paw_size = (config.height as f32 * config.paw_size_ratio) as u32;
     let bear_paw = render_svg_to_rgba(BEAR_PAW_SVG, paw_size)?;
 
-    pb.set_message("Compositing paw...");
     let (paw_x, paw_y) = if config.center_paw {
         // Center the paw in the flag
         let x = (config.width.saturating_sub(bear_paw.width())) / 2;
@@ -435,29 +415,56 @@ pub fn generate_flag(config: &FlagConfig) -> Result<(), FlagError> {
 
     composite_with_alpha(&mut img, &bear_paw, paw_x, paw_y);
 
-    pb.set_message("Saving image...");
     let format = config.detect_format();
-    img.save_with_format(&config.output_path, format)
-        .map_err(|e| FlagError::ImageSave {
-            path: config.output_path.clone(),
-            source: e,
-        })?;
+    let dynamic_img = DynamicImage::ImageRgba8(img);
+    let mut bytes = Vec::new();
+    {
+        let mut cursor = std::io::Cursor::new(&mut bytes);
+        dynamic_img
+            .write_to(&mut cursor, format)
+            .map_err(|e| FlagError::ImageSave {
+                path: "memory".to_string(),
+                source: e,
+            })?;
+    }
 
-    pb.finish_with_message("Complete!");
+    Ok(bytes)
+}
+
+/// Generates the complete gay bear pride flag
+///
+/// Creates a flag with smooth color transitions and a bear paw overlay,
+/// saving the result to the configured output path.
+///
+/// # Arguments
+///
+/// * `config` - Configuration specifying dimensions, output path, and styling
+///
+/// # Errors
+///
+/// Returns errors if SVG rendering fails, image buffer creation fails,
+/// or the image cannot be saved to the output path.
+#[cfg(test)]
+pub fn generate_flag(config: &FlagConfig) -> Result<(), FlagError> {
+    let bytes = generate_flag_bytes(config)?;
+    std::fs::write(&config.output_path, bytes).map_err(|e| FlagError::ImageSave {
+        path: config.output_path.clone(),
+        source: image::ImageError::from(std::io::Error::from(e)),
+    })?;
     Ok(())
 }
 
 /// Output image format
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     /// PNG format (supports transparency)
-    #[value(name = "png")]
+    #[default]
     Png,
     /// JPEG format (no transparency support)
-    #[value(name = "jpg", name = "jpeg")]
+    #[serde(alias = "jpg")]
     Jpeg,
     /// WebP format (supports transparency)
-    #[value(name = "webp")]
     WebP,
 }
 
@@ -471,107 +478,184 @@ impl From<OutputFormat> for ImageFormat {
     }
 }
 
-/// Command-line arguments for the bear flag generator
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    /// Device preset to generate wallpaper for
-    #[arg(short, long, value_enum, default_value = "desktop-4k")]
-    device: DevicePreset,
+/// API request parameters for generating a bear flag
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlagRequest {
+    /// Device preset (optional if width/height are provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<DevicePreset>,
 
-    /// Custom output path (overrides default based on dimensions)
-    #[arg(short, long)]
-    output: Option<String>,
+    /// Custom width in pixels (optional, overrides device preset if provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
 
-    /// Output image format (auto-detected from file extension if not specified)
-    #[arg(short = 'f', long, value_enum)]
-    format: Option<OutputFormat>,
+    /// Custom height in pixels (optional, overrides device preset if provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
 
-    /// Custom width in pixels (overrides device preset)
-    #[arg(long)]
-    width: Option<u32>,
+    /// Output image format (defaults to PNG)
+    #[serde(default)]
+    pub format: OutputFormat,
 
-    /// Custom height in pixels (overrides device preset)
-    #[arg(long)]
-    height: Option<u32>,
+    /// Size of the bear paw as a fraction of flag height (0.01-1.0, defaults to 0.35)
+    #[serde(default = "default_paw_size")]
+    pub paw_size: f32,
 
-    /// Size of the bear paw as a fraction of flag height (0.01-1.0)
-    #[arg(long, default_value = "0.35")]
-    paw_size: f32,
+    /// Place paw in bottom-left instead of center (defaults to false)
+    #[serde(default)]
+    pub bottom_left: bool,
 
-    /// Place paw in bottom-left instead of center
-    #[arg(long)]
-    bottom_left: bool,
-
-    /// Use transparent background (only for PNG/WebP formats)
-    #[arg(long)]
-    transparent: bool,
+    /// Use transparent background (only for PNG/WebP formats, defaults to false)
+    #[serde(default)]
+    pub transparent: bool,
 }
 
-fn main() -> Result<(), FlagError> {
-    let cli = Cli::parse();
+fn default_paw_size() -> f32 {
+    0.35
+}
 
-    let mut config = if let (Some(width), Some(height)) = (cli.width, cli.height) {
-        // Custom dimensions override device preset
-        FlagConfig {
+impl FlagRequest {
+    /// Converts the request into a FlagConfig
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is invalid (e.g., missing dimensions)
+    pub fn to_config(&self) -> Result<FlagConfig, FlagError> {
+        let (width, height) = if let (Some(w), Some(h)) = (self.width, self.height) {
+            (w, h)
+        } else if let Some(device) = self.device {
+            device.into()
+        } else {
+            return Err(FlagError::InvalidConfig(
+                "Either device preset or both width and height must be provided".to_string(),
+            ));
+        };
+
+        let format = ImageFormat::from(self.format);
+        if self.transparent && format == ImageFormat::Jpeg {
+            return Err(FlagError::InvalidConfig(
+                "JPEG format does not support transparency".to_string(),
+            ));
+        }
+
+        let output_path = format!(
+            "bear_flag_{}x{}.{}",
             width,
             height,
-            output_path: format!("bear_flag_{}x{}.png", width, height),
-            output_format: cli.format.map(Into::into),
-            paw_size_ratio: cli.paw_size,
-            center_paw: !cli.bottom_left,
-            transparent: cli.transparent,
+            format_extension(format)
+        );
+        Ok(FlagConfig {
+            width,
+            height,
+            output_path,
+            output_format: Some(format),
+            paw_size_ratio: self.paw_size,
+            center_paw: !self.bottom_left,
+            transparent: self.transparent,
+        })
+    }
+}
+
+fn format_extension(format: ImageFormat) -> &'static str {
+    match format {
+        ImageFormat::Png => "png",
+        ImageFormat::Jpeg => "jpg",
+        ImageFormat::WebP => "webp",
+        _ => "png",
+    }
+}
+
+/// API error response
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub error: String,
+}
+
+/// Handler for generating bear flag images
+///
+/// Accepts query parameters matching FlagRequest and returns the generated image.
+async fn generate_flag_handler(Query(params): Query<FlagRequest>) -> impl IntoResponse {
+    let config = match params.to_config() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            let error_json = serde_json::to_string(&ErrorResponse {
+                error: e.to_string(),
+            })
+            .unwrap_or_else(|_| r#"{"error":"Failed to serialize error"}"#.to_string());
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "application/json")],
+                error_json,
+            )
+                .into_response();
         }
-    } else {
-        // Use device preset
-        let mut cfg = FlagConfig::from_preset(cli.device);
-        cfg.paw_size_ratio = cli.paw_size;
-        cfg.center_paw = !cli.bottom_left;
-        cfg.transparent = cli.transparent;
-        cfg.output_format = cli.format.map(Into::into);
-        cfg
     };
 
-    // Apply custom output path if provided
-    if let Some(output) = cli.output {
-        config.output_path = output;
-    }
-
-    // Warn if transparent is set with JPEG format
-    let format = config.detect_format();
-    if config.transparent && format == ImageFormat::Jpeg {
-        eprintln!("Warning: JPEG format does not support transparency. Using opaque background.");
-        config.transparent = false;
-    }
-
-    let device_name = if cli.width.is_some() && cli.height.is_some() {
-        "Custom".to_string()
-    } else {
-        cli.device.display_name().to_string()
+    let image_bytes = match generate_flag_bytes(&config) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            let error_json = serde_json::to_string(&ErrorResponse {
+                error: e.to_string(),
+            })
+            .unwrap_or_else(|_| r#"{"error":"Failed to serialize error"}"#.to_string());
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CONTENT_TYPE, "application/json")],
+                error_json,
+            )
+                .into_response();
+        }
     };
 
-    println!("Generating gay bear pride flag...");
-    println!("  Device: {}", device_name);
-    println!("  Dimensions: {}x{}", config.width, config.height);
-    println!("  Output: {}", config.output_path);
-    println!("  Format: {:?}", format);
-    println!(
-        "  Paw position: {}",
-        if config.center_paw {
-            "centered"
-        } else {
-            "bottom-left"
-        }
-    );
-    if config.transparent {
-        println!("  Background: transparent");
-    }
+    let content_type = match config.detect_format() {
+        ImageFormat::Png => "image/png",
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::WebP => "image/webp",
+        _ => "image/png",
+    };
 
-    generate_flag(&config)?;
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        image_bytes,
+    )
+        .into_response()
+}
 
-    println!("\n? Flag generated successfully!");
+/// Health check endpoint
+async fn health_handler() -> &'static str {
+    "OK"
+}
 
-    Ok(())
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    let app = Router::new()
+        .route("/api/flag", get(generate_flag_handler))
+        .route("/health", get(health_handler))
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(CorsLayer::permissive())
+                .into_inner(),
+        );
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+        .await
+        .expect("Failed to bind to address");
+    info!("Bear Flag API server listening on http://0.0.0.0:3000");
+    info!("API endpoint: GET /api/flag?device=desktop-4k&format=png");
+    info!("Health check: GET /health");
+
+    axum::serve(listener, app)
+        .await
+        .expect("Server failed to start");
 }
 
 #[cfg(test)]
