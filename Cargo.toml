@@ -2,6 +2,18 @@
 name = "bear_flag"
 version = "0.1.0"
 edition = "2021"
+authors = ["Bear Flag Generator"]
+description = "Generates high-quality gay bear pride flags with smooth gradients and bear paw overlays"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/example/bear_flag"
+
+[lib]
+name = "bear_flag"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bear_flag"
+path = "src/main.rs"
 
 [dependencies]
 image = "=0.25.2"
@@ -9,3 +21,5 @@ usvg = "=0.45.0"
 resvg = { version = "=0.45.0" }
 thiserror = "=1.0.69"
 clap = { version = "=4.5.20", features = ["derive"] }
+indicatif = "=0.17.11"
+rayon = "=1.10.0"
