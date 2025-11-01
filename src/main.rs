@@ -44,6 +44,82 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
     ((1.0 - t) * a as f32 + t * b as f32).round() as u8
 }
 
+/// Draw a drop shadow around the paw print for better visibility
+fn draw_paw_with_shadow(
+    img: &mut RgbaImage,
+    paw: &RgbaImage,
+    center_x: i32,
+    center_y: i32,
+    shadow_offset: i32,
+    shadow_blur: i32,
+) {
+    let img_w = img.width() as i32;
+    let img_h = img.height() as i32;
+
+    // Draw shadow first (darker, blurred)
+    for (px, py, pixel) in paw.enumerate_pixels() {
+        if pixel[3] != 0 {
+            let px_i = px as i32;
+            let py_i = py as i32;
+
+            // Draw shadow with blur
+            for dy in -shadow_blur..=shadow_blur {
+                for dx in -shadow_blur..=shadow_blur {
+                    let dist_sq = dx * dx + dy * dy;
+                    if dist_sq <= shadow_blur * shadow_blur {
+                        let shadow_x = center_x + px_i + shadow_offset + dx;
+                        let shadow_y = center_y + py_i + shadow_offset + dy;
+
+                        if shadow_x >= 0 && shadow_x < img_w && shadow_y >= 0 && shadow_y < img_h {
+                            let alpha = ((pixel[3] as f32)
+                                * (1.0 - dist_sq as f32 / (shadow_blur * shadow_blur) as f32)
+                                * 0.3)
+                                .min(255.0) as u8;
+                            if alpha > 0 {
+                                let existing = img.get_pixel(shadow_x as u32, shadow_y as u32);
+                                let shadow = Rgba([0, 0, 0, alpha]);
+                                let blended = Rgba([
+                                    (existing[0] as u16 * (255 - alpha) as u16 / 255
+                                        + shadow[0] as u16 * alpha as u16 / 255)
+                                        as u8,
+                                    (existing[1] as u16 * (255 - alpha) as u16 / 255
+                                        + shadow[1] as u16 * alpha as u16 / 255)
+                                        as u8,
+                                    (existing[2] as u16 * (255 - alpha) as u16 / 255
+                                        + shadow[2] as u16 * alpha as u16 / 255)
+                                        as u8,
+                                    255,
+                                ]);
+                                img.put_pixel(shadow_x as u32, shadow_y as u32, blended);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Draw the paw print itself
+    for (px, py, pixel) in paw.enumerate_pixels() {
+        if pixel[3] != 0 {
+            let x = center_x + px as i32;
+            let y = center_y + py as i32;
+
+            if x >= 0 && x < img_w && y >= 0 && y < img_h {
+                let existing = img.get_pixel(x as u32, y as u32);
+                let alpha = pixel[3] as f32 / 255.0;
+                let blended = Rgba([
+                    ((existing[0] as f32 * (1.0 - alpha) + pixel[0] as f32 * alpha).round()) as u8,
+                    ((existing[1] as f32 * (1.0 - alpha) + pixel[1] as f32 * alpha).round()) as u8,
+                    ((existing[2] as f32 * (1.0 - alpha) + pixel[2] as f32 * alpha).round()) as u8,
+                    255,
+                ]);
+                img.put_pixel(x as u32, y as u32, blended);
+            }
+        }
+    }
+}
+
 fn draw_bear_flag(img: &mut RgbaImage, palette: &[u32], stripe: u32, h: u32) {
     for (i, &hex) in palette.iter().enumerate() {
         let next_hex = if i + 1 < palette.len() {
@@ -90,22 +166,27 @@ fn draw_bear_flag(img: &mut RgbaImage, palette: &[u32], stripe: u32, h: u32) {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (w, h) = (3840, 2160);
 
     let mut img = RgbaImage::new(w, h);
     draw_bear_flag(&mut img, &PALETTE, w / PALETTE.len() as u32, h);
 
-    let bear_paw = get_svg_as_rgba(BEAR_PAW_SVG, h / 4).unwrap();
+    // Make the bear paw larger and more prominent (1/3 of height instead of 1/4)
+    let paw_target_size = h / 3;
+    let bear_paw = get_svg_as_rgba(BEAR_PAW_SVG, paw_target_size)?;
 
-    let bear_paw_height = bear_paw.height();
+    let paw_w = bear_paw.width() as i32;
+    let paw_h = bear_paw.height() as i32;
 
-    // Draw the bear paw onto the flag (bottom‑left) while honoring transparency
-    for (x, y, pixel) in bear_paw.enumerate_pixels() {
-        if pixel[3] != 0 {
-            img.put_pixel(x, y + h - bear_paw_height, *pixel);
-        }
-    }
+    // Center the paw horizontally, position near bottom with some margin
+    let center_x = (w as i32 - paw_w) / 2;
+    let bottom_margin = h / 8;
+    let center_y = h as i32 - paw_h as i32 - bottom_margin as i32;
 
-    img.save("bear_flag.png").unwrap();
+    // Draw paw with shadow for better visibility
+    draw_paw_with_shadow(&mut img, &bear_paw, center_x, center_y, 8, 12);
+
+    img.save("bear_flag.png")?;
+    Ok(())
 }
