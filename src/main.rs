@@ -1,8 +1,9 @@
-//! Gay Bear Flag API Service
+//! Pride Flag API Service
 //!
-//! Axum web service that generates high-quality gay bear pride flags with smooth
-//! color gradients and a centered bear paw overlay. The flag combines the traditional
-//! bear pride colors with proper alpha compositing for professional results.
+//! Axum web service that generates high-quality pride flags with smooth color gradients.
+//! Supports multiple pride flag presets (rainbow, bear, bisexual, transgender, pansexual,
+//! lesbian, asexual, nonbinary, progress) or custom colors and stripe counts. Bear flags
+//! include an optional centered bear paw overlay with proper alpha compositing.
 
 mod constants;
 mod flag;
@@ -32,16 +33,17 @@ async fn main() {
         .parse()
         .expect("Failed to parse bind address");
 
-    info!("Starting Bear Flag API server on {}", addr);
+    info!("Starting Pride Flag API server on {}", addr);
     info!("Available endpoints:");
-    info!("  GET /flag - Generate bear pride flag");
+    info!("  GET /flag - Generate pride flags");
     info!("  GET /health - Health check");
     info!("");
     info!("Example requests:");
-    info!("  curl 'http://localhost:3000/flag?preset=desktop-4k' -o flag.png");
-    info!("  curl 'http://localhost:3000/flag?width=1920&height=1080&format=jpeg' -o flag.jpg");
+    info!("  curl 'http://localhost:3000/flag?pride=rainbow&preset=desktop-4k' -o flag.png");
+    info!("  curl 'http://localhost:3000/flag?pride=transgender&width=1920&height=1080' -o flag.png");
+    info!("  curl 'http://localhost:3000/flag?colors=FF0000,00FF00,0000FF&stripe_count=6' -o flag.png");
     info!(
-        "  curl 'http://localhost:3000/flag?preset=iphone-14-pro-max&transparent=true' -o flag.png"
+        "  curl 'http://localhost:3000/flag?pride=bear&preset=iphone-14-pro-max&transparent=true' -o flag.png"
     );
 
     let listener = tokio::net::TcpListener::bind(addr)

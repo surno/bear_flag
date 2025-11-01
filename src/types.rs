@@ -119,6 +119,65 @@ impl OutputFormat {
     }
 }
 
+/// Pride flag presets with their standard color palettes
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub enum PrideFlagPreset {
+    /// Traditional rainbow pride flag - 6 stripes
+    #[serde(rename = "rainbow")]
+    Rainbow,
+    /// Bear pride flag - 14 warm brown/black stripes
+    #[serde(rename = "bear")]
+    Bear,
+    /// Bisexual pride flag - 3 stripes (pink, purple, blue)
+    #[serde(rename = "bisexual")]
+    Bisexual,
+    /// Transgender pride flag - 5 stripes (light blue, pink, white, pink, light blue)
+    #[serde(rename = "transgender")]
+    Transgender,
+    /// Pansexual pride flag - 3 stripes (pink, yellow, blue)
+    #[serde(rename = "pansexual")]
+    Pansexual,
+    /// Lesbian pride flag - 7 stripes (dark orange to white)
+    #[serde(rename = "lesbian")]
+    Lesbian,
+    /// Asexual pride flag - 4 stripes (black, gray, white, purple)
+    #[serde(rename = "asexual")]
+    Asexual,
+    /// Non-binary pride flag - 4 stripes (yellow, white, purple, black)
+    #[serde(rename = "nonbinary")]
+    NonBinary,
+    /// Progress pride flag - rainbow with triangle (chevron) of additional colors
+    #[serde(rename = "progress")]
+    Progress,
+}
+
+impl PrideFlagPreset {
+    /// Returns the color palette for this pride flag as u32 hex values (0xRRGGBB)
+    pub fn palette(self) -> &'static [u32] {
+        match self {
+            PrideFlagPreset::Rainbow => &[0xE40303, 0xFF8C00, 0xFFED00, 0x008026, 0x004DFF, 0x750787],
+            PrideFlagPreset::Bear => &[
+                0xC02A01, 0xF1500A, 0xFB7D22, 0xFA9C3C, 0xE6B75D, 0xF0C578, 0xE3C790, 0xBD7B41,
+                0x89491D, 0x4D0509, 0x380605, 0x290A06, 0x1C0808, 0x150705,
+            ],
+            PrideFlagPreset::Bisexual => &[0xD60270, 0xD60270, 0x9B4F96, 0x0038A8, 0x0038A8],
+            PrideFlagPreset::Transgender => &[0x5BCEFA, 0xF5A9B8, 0xFFFFFF, 0xF5A9B8, 0x5BCEFA],
+            PrideFlagPreset::Pansexual => &[0xFF218C, 0xFFD800, 0x21B1FF],
+            PrideFlagPreset::Lesbian => &[
+                0xD52D00, 0xEF7627, 0xFF9A56, 0xFFFFFF, 0xD162A4, 0xB55690, 0xA30262,
+            ],
+            PrideFlagPreset::Asexual => &[0x000000, 0xA3A3A3, 0xFFFFFF, 0x810081],
+            PrideFlagPreset::NonBinary => &[0xFFF430, 0xFFFFFF, 0x9C59D1, 0x000000],
+            PrideFlagPreset::Progress => &[0x000000, 0x784F17, 0xFFFFFF, 0x5BCEFA, 0xFFFFFF, 0xF5A9B8, 0x000000],
+        }
+    }
+
+    /// Returns whether this flag type typically includes an overlay (like bear paw)
+    pub fn includes_overlay(self) -> bool {
+        matches!(self, PrideFlagPreset::Bear)
+    }
+}
+
 /// Errors that can occur during flag generation
 #[derive(Error, Debug)]
 pub enum FlagError {
@@ -147,12 +206,18 @@ pub struct FlagConfig {
     pub height: u32,
     /// Image format for output
     pub output_format: OutputFormat,
+    /// Color palette as u32 hex values (0xRRGGBB)
+    pub palette: Vec<u32>,
+    /// Number of stripes to draw
+    pub stripe_count: u32,
     /// Size of the bear paw as a fraction of flag height (0.0-1.0)
     pub paw_size_ratio: f32,
     /// Whether to center the bear paw vertically and horizontally
     pub center_paw: bool,
     /// Whether to use transparent background (only for formats that support it)
     pub transparent: bool,
+    /// Whether to include the paw overlay (only for bear flag)
+    pub include_overlay: bool,
 }
 
 impl Default for FlagConfig {
@@ -161,9 +226,12 @@ impl Default for FlagConfig {
             width: 3840,
             height: 2160,
             output_format: OutputFormat::Png,
+            palette: PrideFlagPreset::Bear.palette().to_vec(),
+            stripe_count: PrideFlagPreset::Bear.palette().len() as u32,
             paw_size_ratio: 0.35,
             center_paw: true,
             transparent: false,
+            include_overlay: true,
         }
     }
 }
@@ -178,9 +246,12 @@ impl FlagConfig {
             width,
             height,
             output_format: OutputFormat::Png,
+            palette: PrideFlagPreset::Bear.palette().to_vec(),
+            stripe_count: PrideFlagPreset::Bear.palette().len() as u32,
             paw_size_ratio: 0.35,
             center_paw: true,
             transparent: false,
+            include_overlay: true,
         }
     }
 
@@ -205,6 +276,21 @@ impl FlagConfig {
                 "Paw size ratio must be between 0.01 and 1.0".to_string(),
             ));
         }
+        if self.palette.is_empty() {
+            return Err(FlagError::InvalidConfig(
+                "Color palette must not be empty".to_string(),
+            ));
+        }
+        if self.stripe_count == 0 {
+            return Err(FlagError::InvalidConfig(
+                "Stripe count must be non-zero".to_string(),
+            ));
+        }
+        if self.stripe_count > 100 {
+            return Err(FlagError::InvalidConfig(
+                "Stripe count must not exceed 100".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -214,6 +300,8 @@ impl FlagConfig {
 pub struct FlagQuery {
     /// Device preset for standard dimensions
     pub preset: Option<DevicePreset>,
+    /// Pride flag preset (rainbow, bear, bisexual, transgender, etc.)
+    pub pride: Option<PrideFlagPreset>,
     /// Custom width in pixels (overrides preset)
     pub width: Option<u32>,
     /// Custom height in pixels (overrides preset)
@@ -221,6 +309,11 @@ pub struct FlagQuery {
     /// Output format (png, jpeg, webp)
     #[serde(default = "default_format")]
     pub format: OutputFormat,
+    /// Custom colors as comma-separated hex values (e.g., "FF0000,00FF00,0000FF")
+    /// Overrides pride preset if provided
+    pub colors: Option<String>,
+    /// Number of stripes to draw (defaults to palette length)
+    pub stripe_count: Option<u32>,
     /// Paw size as fraction of height (0.01-1.0)
     #[serde(default = "default_paw_size")]
     pub paw_size: f32,
@@ -230,6 +323,8 @@ pub struct FlagQuery {
     /// Whether to use transparent background (default: false)
     #[serde(default)]
     pub transparent: bool,
+    /// Whether to include overlay (paw) on flag (default: auto based on flag type)
+    pub include_overlay: Option<bool>,
 }
 
 fn default_format() -> OutputFormat {
@@ -242,6 +337,59 @@ fn default_paw_size() -> f32 {
 
 fn default_center_paw() -> bool {
     true
+}
+
+/// Parses comma-separated hex color strings into u32 values
+///
+/// Accepts colors in formats: "FF0000", "#FF0000", "0xFF0000", "ff0000"
+/// Returns an error if any color cannot be parsed
+///
+/// # Errors
+///
+/// Returns `FlagError::InvalidConfig` if any color is invalid
+pub fn parse_colors(colors_str: &str) -> Result<Vec<u32>, FlagError> {
+    let mut palette = Vec::new();
+
+    for color_str in colors_str.split(',') {
+        let color_str = color_str.trim();
+        if color_str.is_empty() {
+            continue;
+        }
+
+        // Remove optional prefix markers
+        let color_str = color_str
+            .strip_prefix('#')
+            .or_else(|| color_str.strip_prefix("0x"))
+            .or_else(|| color_str.strip_prefix("0X"))
+            .unwrap_or(color_str);
+
+        // Parse hex string to u32
+        let color = u32::from_str_radix(color_str, 16)
+            .map_err(|_| {
+                FlagError::InvalidConfig(format!(
+                    "Invalid hex color: '{}'. Expected format: RRGGBB or #RRGGBB",
+                    color_str
+                ))
+            })?;
+
+        // Validate it's a 6-digit hex color (0x000000 - 0xFFFFFF)
+        if color > 0xFFFFFF {
+            return Err(FlagError::InvalidConfig(format!(
+                "Color value too large: 0x{:X}. Must be in range 0x000000-0xFFFFFF",
+                color
+            )));
+        }
+
+        palette.push(color);
+    }
+
+    if palette.is_empty() {
+        return Err(FlagError::InvalidConfig(
+            "At least one color must be provided".to_string(),
+        ));
+    }
+
+    Ok(palette)
 }
 
 #[cfg(test)]
@@ -311,5 +459,89 @@ mod tests {
         assert_eq!(OutputFormat::Png.mime_type(), "image/png");
         assert_eq!(OutputFormat::Jpeg.mime_type(), "image/jpeg");
         assert_eq!(OutputFormat::WebP.mime_type(), "image/webp");
+    }
+
+    #[test]
+    fn test_parse_colors_simple() {
+        let result = parse_colors("FF0000,00FF00,0000FF").unwrap();
+        assert_eq!(result, vec![0xFF0000, 0x00FF00, 0x0000FF]);
+    }
+
+    #[test]
+    fn test_parse_colors_with_hash() {
+        let result = parse_colors("#FF0000,#00FF00,#0000FF").unwrap();
+        assert_eq!(result, vec![0xFF0000, 0x00FF00, 0x0000FF]);
+    }
+
+    #[test]
+    fn test_parse_colors_mixed_formats() {
+        let result = parse_colors("FF0000,#00FF00,0x0000FF").unwrap();
+        assert_eq!(result, vec![0xFF0000, 0x00FF00, 0x0000FF]);
+    }
+
+    #[test]
+    fn test_parse_colors_lowercase() {
+        let result = parse_colors("ff0000,00ff00,0000ff").unwrap();
+        assert_eq!(result, vec![0xFF0000, 0x00FF00, 0x0000FF]);
+    }
+
+    #[test]
+    fn test_parse_colors_invalid() {
+        assert!(parse_colors("GGGGGG").is_err());
+        assert!(parse_colors("").is_err());
+        assert!(parse_colors("FF0000,INVALID").is_err());
+    }
+
+    #[test]
+    fn test_pride_flag_palettes() {
+        assert_eq!(PrideFlagPreset::Rainbow.palette().len(), 6);
+        assert_eq!(PrideFlagPreset::Bear.palette().len(), 14);
+        assert_eq!(PrideFlagPreset::Bisexual.palette().len(), 5);
+        assert_eq!(PrideFlagPreset::Transgender.palette().len(), 5);
+        assert_eq!(PrideFlagPreset::Pansexual.palette().len(), 3);
+    }
+
+    #[test]
+    fn test_pride_flag_overlay() {
+        assert!(PrideFlagPreset::Bear.includes_overlay());
+        assert!(!PrideFlagPreset::Rainbow.includes_overlay());
+        assert!(!PrideFlagPreset::Transgender.includes_overlay());
+    }
+
+    #[test]
+    fn test_flag_config_with_custom_palette() {
+        let config = FlagConfig {
+            width: 1920,
+            height: 1080,
+            output_format: OutputFormat::Png,
+            palette: vec![0xFF0000, 0x00FF00, 0x0000FF],
+            stripe_count: 3,
+            paw_size_ratio: 0.3,
+            center_paw: true,
+            transparent: false,
+            include_overlay: false,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_flag_config_validation_empty_palette() {
+        let mut config = FlagConfig::default();
+        config.palette.clear();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_flag_config_validation_zero_stripes() {
+        let mut config = FlagConfig::default();
+        config.stripe_count = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_flag_config_validation_too_many_stripes() {
+        let mut config = FlagConfig::default();
+        config.stripe_count = 101;
+        assert!(config.validate().is_err());
     }
 }
