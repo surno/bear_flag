@@ -1,7 +1,7 @@
 //! HTTP request handlers
 
 use crate::flag::generate_flag_bytes;
-use crate::types::{FlagConfig, FlagError, FlagQuery, OutputFormat};
+use crate::types::{FlagConfig, FlagError, FlagQuery, OutputFormat, PrideFlagPreset};
 use axum::{
     extract::Query,
     http::{header, StatusCode},
@@ -9,6 +9,30 @@ use axum::{
 };
 use serde::Serialize;
 use tracing::{info, warn};
+
+/// Parse custom colors from comma-separated hex string
+///
+/// Accepts formats like "FF0000,00FF00,0000FF" or "FF0000, 00FF00, 0000FF"
+/// Each color should be 6 hex digits (RGB)
+///
+/// # Errors
+///
+/// Returns FlagError::InvalidConfig if colors cannot be parsed
+fn parse_custom_colors(colors_str: &str) -> Result<Vec<u32>, FlagError> {
+    colors_str
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            u32::from_str_radix(s, 16).map_err(|_| {
+                FlagError::InvalidConfig(format!(
+                    "Invalid hex color '{}'. Expected 6 hex digits (RRGGBB)",
+                    s
+                ))
+            })
+        })
+        .collect()
+}
 
 /// HTTP error response with JSON body
 #[derive(Serialize)]
@@ -38,49 +62,60 @@ impl IntoResponse for FlagError {
     }
 }
 
-/// GET /flag - Generate bear pride flag with query parameters
+/// GET /flag - Generate pride flag with query parameters
 ///
 /// Query Parameters:
+/// - flag: Pride flag preset (rainbow, trans, bi, pan, bear, etc.) - default: rainbow
 /// - preset: Device preset (e.g., "desktop-4k", "iphone-14-pro-max")
 /// - width: Custom width in pixels (overrides preset)
 /// - height: Custom height in pixels (overrides preset)
+/// - colors: Custom colors as comma-separated hex values (e.g., "FF0000,00FF00,0000FF")
 /// - format: Output format (png, jpeg, webp) - default: png
+/// - include_paw: Include bear paw overlay (true/false) - default: auto-detected from flag type
 /// - paw_size: Paw size ratio 0.01-1.0 - default: 0.35
 /// - center_paw: Center the paw (true/false) - default: true
 /// - transparent: Use transparent background (true/false) - default: false
 #[tracing::instrument(skip_all, fields(
+    flag = ?query.flag,
     width = ?query.width.or_else(|| query.preset.map(|p| p.into()).map(|(w, _)| w)),
     height = ?query.height.or_else(|| query.preset.map(|p| p.into()).map(|(_, h)| h)),
     format = ?query.format
 ))]
 pub async fn generate_flag_handler(Query(query): Query<FlagQuery>) -> Result<Response, FlagError> {
-    // Build configuration from query params
-    let mut config = if let (Some(width), Some(height)) = (query.width, query.height) {
-        FlagConfig {
-            width,
-            height,
-            output_format: query.format,
-            paw_size_ratio: query.paw_size,
-            center_paw: query.center_paw,
-            transparent: query.transparent,
-        }
+    // Determine dimensions
+    let (width, height) = if let (Some(w), Some(h)) = (query.width, query.height) {
+        (w, h)
     } else if let Some(preset) = query.preset {
-        let mut config = FlagConfig::from_preset(preset);
-        config.output_format = query.format;
-        config.paw_size_ratio = query.paw_size;
-        config.center_paw = query.center_paw;
-        config.transparent = query.transparent;
-        config
+        preset.into()
     } else {
-        // Use default 4K dimensions
-        FlagConfig {
-            width: 3840,
-            height: 2160,
-            output_format: query.format,
-            paw_size_ratio: query.paw_size,
-            center_paw: query.center_paw,
-            transparent: query.transparent,
-        }
+        // Default to 4K
+        (3840, 2160)
+    };
+
+    // Determine flag type and colors
+    let flag_preset = query.flag.unwrap_or(PrideFlagPreset::Rainbow);
+    let colors = if let Some(ref colors_str) = query.colors {
+        // Custom colors override flag preset
+        parse_custom_colors(colors_str)?
+    } else {
+        flag_preset.colors()
+    };
+
+    // Determine if bear paw should be included
+    let include_paw = query
+        .include_paw
+        .unwrap_or_else(|| flag_preset.has_bear_paw());
+
+    // Build configuration
+    let mut config = FlagConfig {
+        width,
+        height,
+        output_format: query.format,
+        colors,
+        include_paw,
+        paw_size_ratio: query.paw_size,
+        center_paw: query.center_paw,
+        transparent: query.transparent,
     };
 
     // Warn and disable transparent for JPEG
@@ -90,8 +125,17 @@ pub async fn generate_flag_handler(Query(query): Query<FlagQuery>) -> Result<Res
     }
 
     info!(
-        "Generating {}x{} flag in {:?} format",
-        config.width, config.height, config.output_format
+        "Generating {}x{} {} flag ({} stripes) in {:?} format{}",
+        config.width,
+        config.height,
+        flag_preset.display_name(),
+        config.colors.len(),
+        config.output_format,
+        if config.include_paw {
+            " with bear paw"
+        } else {
+            ""
+        }
     );
 
     let bytes = generate_flag_bytes(&config)?;
@@ -158,6 +202,66 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_flag_endpoint_with_flag_type() {
+        let response = create_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/flag?flag=trans&width=640&height=480")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_flag_endpoint_with_custom_colors() {
+        let response = create_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/flag?colors=FF0000,00FF00,0000FF&width=320&height=240")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_flag_endpoint_bear_with_paw() {
+        let response = create_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/flag?flag=bear&width=640&height=480")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_flag_endpoint_invalid_colors() {
+        let response = create_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/flag?colors=ZZZZZZ&width=320&height=240")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

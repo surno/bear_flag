@@ -57,7 +57,7 @@ pub fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
     ((1.0 - t).mul_add(a as f32, t * b as f32)).round() as u8
 }
 
-/// Draws the bear pride flag with smooth color transitions
+/// Draws pride flag stripes with smooth color transitions
 ///
 /// Creates horizontal stripes from the given palette with smooth gradients
 /// between adjacent colors for a professional appearance.
@@ -68,7 +68,7 @@ pub fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
 /// * `palette` - Array of RGB colors as u32 hex values (0xRRGGBB)
 /// * `stripe_width` - Width of each color stripe in pixels
 /// * `height` - Height of the flag in pixels
-pub fn draw_bear_stripes(img: &mut RgbaImage, palette: &[u32], stripe_width: u32, height: u32) {
+pub fn draw_stripes(img: &mut RgbaImage, palette: &[u32], stripe_width: u32, height: u32) {
     for (i, &hex) in palette.iter().enumerate() {
         let next_hex = palette.get(i + 1).copied().unwrap_or(hex);
 

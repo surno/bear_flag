@@ -5,6 +5,8 @@ pub const BEAR_PAW_SVG: &[u8] = include_bytes!("assets/bear_paw.svg");
 
 /// Traditional bear pride palette: warm browns transitioning to deep browns/blacks
 /// Colors chosen to represent the bear community's diversity and warmth
+/// Kept for backward compatibility; use PrideFlagPreset::Bear.colors() instead
+#[allow(dead_code)]
 pub const BEAR_PALETTE: [u32; 14] = [
     0xC02A01, 0xF1500A, 0xFB7D22, 0xFA9C3C, 0xE6B75D, 0xF0C578, 0xE3C790, 0xBD7B41, 0x89491D,
     0x4D0509, 0x380605, 0x290A06, 0x1C0808, 0x150705,
