@@ -4,6 +4,7 @@
 //! and a centered bear paw overlay. The flag combines the traditional bear
 //! pride colors with proper alpha compositing for professional results.
 
+use clap::{Parser, ValueEnum};
 use image::{ImageBuffer, Rgba, RgbaImage};
 use resvg::tiny_skia::Pixmap;
 use resvg::usvg;
@@ -59,10 +60,32 @@ pub struct FlagConfig {
 
 impl Default for FlagConfig {
     fn default() -> Self {
+        Self::desktop()
+    }
+}
+
+impl FlagConfig {
+    /// Creates a configuration preset for desktop wallpapers (4K landscape)
+    ///
+    /// Dimensions: 3840x2160 pixels
+    pub fn desktop() -> Self {
         Self {
             width: 3840,
             height: 2160,
-            output_path: "bear_flag.png".to_string(),
+            output_path: "bear_flag_desktop.png".to_string(),
+            paw_size_ratio: 0.35,
+            center_paw: true,
+        }
+    }
+
+    /// Creates a configuration preset for iPhone wallpapers (portrait)
+    ///
+    /// Dimensions: 1290x2796 pixels (suitable for modern iPhones including iPhone 14 Pro Max)
+    pub fn iphone() -> Self {
+        Self {
+            width: 1290,
+            height: 2796,
+            output_path: "bear_flag_iphone.png".to_string(),
             paw_size_ratio: 0.35,
             center_paw: true,
         }
@@ -224,12 +247,9 @@ fn composite_with_alpha(dst: &mut RgbaImage, src: &RgbaImage, offset_x: u32, off
         let inv_alpha = 1.0 - src_alpha;
 
         let blended = Rgba([
-            (src_alpha.mul_add(src_pixel[0] as f32, inv_alpha * dst_pixel[0] as f32))
-                .round() as u8,
-            (src_alpha.mul_add(src_pixel[1] as f32, inv_alpha * dst_pixel[1] as f32))
-                .round() as u8,
-            (src_alpha.mul_add(src_pixel[2] as f32, inv_alpha * dst_pixel[2] as f32))
-                .round() as u8,
+            (src_alpha.mul_add(src_pixel[0] as f32, inv_alpha * dst_pixel[0] as f32)).round() as u8,
+            (src_alpha.mul_add(src_pixel[1] as f32, inv_alpha * dst_pixel[1] as f32)).round() as u8,
+            (src_alpha.mul_add(src_pixel[2] as f32, inv_alpha * dst_pixel[2] as f32)).round() as u8,
             255,
         ]);
 
@@ -284,10 +304,46 @@ pub fn generate_flag(config: &FlagConfig) -> Result<(), FlagError> {
     Ok(())
 }
 
+/// Target platform for flag generation
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Target {
+    /// Desktop wallpaper (3840x2160, landscape)
+    Desktop,
+    /// iPhone wallpaper (1290x2796, portrait)
+    Iphone,
+}
+
+/// Gay Bear Flag Generator
+///
+/// Generates high-quality gay bear pride flags with smooth color gradients
+/// and a centered bear paw overlay optimized for different platforms.
+#[derive(Parser)]
+#[command(name = "bear_flag")]
+#[command(about = "Generate gay bear pride flags", long_about = None)]
+struct Args {
+    /// Target platform for the generated flag
+    #[arg(value_enum, short, long, default_value_t = Target::Desktop)]
+    target: Target,
+
+    /// Custom output path (overrides default filename for selected target)
+    #[arg(short, long)]
+    output: Option<String>,
+}
+
 fn main() -> Result<(), FlagError> {
-    let config = FlagConfig::default();
+    let args = Args::parse();
+
+    let mut config = match args.target {
+        Target::Desktop => FlagConfig::desktop(),
+        Target::Iphone => FlagConfig::iphone(),
+    };
+
+    if let Some(output) = args.output {
+        config.output_path = output;
+    }
 
     println!("Generating gay bear pride flag...");
+    println!("  Target: {:?}", args.target);
     println!("  Dimensions: {}x{}", config.width, config.height);
     println!("  Output: {}", config.output_path);
     println!(

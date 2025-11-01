@@ -8,3 +8,4 @@ image = "=0.25.2"
 usvg = "=0.45.0"
 resvg = { version = "=0.45.0" }
 thiserror = "=1.0.69"
+clap = { version = "=4.5.25", features = ["derive"] }
