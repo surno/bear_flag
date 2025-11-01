@@ -4,6 +4,7 @@
 //! and a centered bear paw overlay. The flag combines the traditional bear
 //! pride colors with proper alpha compositing for professional results.
 
+use clap::{Parser, ValueEnum};
 use image::{ImageBuffer, Rgba, RgbaImage};
 use resvg::tiny_skia::Pixmap;
 use resvg::usvg;
@@ -22,6 +23,62 @@ const BEAR_PALETTE: [u32; 14] = [
 
 /// Number of pixels over which adjacent color stripes smoothly blend
 const SMOOTH_WIDTH: u32 = 16;
+
+/// Preset device configurations with appropriate dimensions for wallpapers
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DevicePreset {
+    /// iPhone 14/13/12 Pro Max - 2796 x 1290 (landscape)
+    #[value(name = "iphone-14-pro-max")]
+    IPhone14ProMax,
+    /// iPhone 14/13/12 Pro - 2556 x 1179 (landscape)
+    #[value(name = "iphone-14-pro")]
+    IPhone14Pro,
+    /// iPhone 14/13/12 - 2532 x 1170 (landscape)
+    #[value(name = "iphone-14")]
+    IPhone14,
+    /// iPhone SE (3rd gen) - 1334 x 750 (landscape)
+    #[value(name = "iphone-se")]
+    IPhoneSE,
+    /// Desktop 4K - 3840 x 2160
+    #[value(name = "desktop-4k")]
+    Desktop4K,
+    /// Desktop 1440p - 2560 x 1440
+    #[value(name = "desktop-1440p")]
+    Desktop1440p,
+    /// Desktop 1080p - 1920 x 1080
+    #[value(name = "desktop-1080p")]
+    Desktop1080p,
+}
+
+impl From<DevicePreset> for (u32, u32) {
+    /// Converts a device preset to (width, height) dimensions
+    fn from(preset: DevicePreset) -> Self {
+        match preset {
+            DevicePreset::IPhone14ProMax => (2796, 1290),
+            DevicePreset::IPhone14Pro => (2556, 1179),
+            DevicePreset::IPhone14 => (2532, 1170),
+            DevicePreset::IPhoneSE => (1334, 750),
+            DevicePreset::Desktop4K => (3840, 2160),
+            DevicePreset::Desktop1440p => (2560, 1440),
+            DevicePreset::Desktop1080p => (1920, 1080),
+        }
+    }
+}
+
+impl DevicePreset {
+    /// Returns a human-readable name for the device preset
+    pub fn display_name(self) -> &'static str {
+        match self {
+            DevicePreset::IPhone14ProMax => "iPhone 14/13/12 Pro Max",
+            DevicePreset::IPhone14Pro => "iPhone 14/13/12 Pro",
+            DevicePreset::IPhone14 => "iPhone 14/13/12",
+            DevicePreset::IPhoneSE => "iPhone SE (3rd gen)",
+            DevicePreset::Desktop4K => "Desktop 4K",
+            DevicePreset::Desktop1440p => "Desktop 1440p",
+            DevicePreset::Desktop1080p => "Desktop 1080p",
+        }
+    }
+}
 
 /// Errors that can occur during flag generation
 #[derive(Error, Debug)]
@@ -70,7 +127,22 @@ impl Default for FlagConfig {
 }
 
 impl FlagConfig {
-    /// Validates the configuration parameters
+    /// Creates a configuration from a device preset
+    ///
+    /// Uses sensible defaults for paw sizing and positioning
+    pub fn from_preset(preset: DevicePreset) -> Self {
+        let (width, height) = preset.into();
+        Self {
+            width,
+            height,
+            output_path: format!("bear_flag_{}x{}.png", width, height),
+            paw_size_ratio: 0.35,
+            center_paw: true,
+        }
+    }
+}
+
+impl FlagConfig {
     ///
     /// # Errors
     ///
@@ -224,12 +296,9 @@ fn composite_with_alpha(dst: &mut RgbaImage, src: &RgbaImage, offset_x: u32, off
         let inv_alpha = 1.0 - src_alpha;
 
         let blended = Rgba([
-            (src_alpha.mul_add(src_pixel[0] as f32, inv_alpha * dst_pixel[0] as f32))
-                .round() as u8,
-            (src_alpha.mul_add(src_pixel[1] as f32, inv_alpha * dst_pixel[1] as f32))
-                .round() as u8,
-            (src_alpha.mul_add(src_pixel[2] as f32, inv_alpha * dst_pixel[2] as f32))
-                .round() as u8,
+            (src_alpha.mul_add(src_pixel[0] as f32, inv_alpha * dst_pixel[0] as f32)).round() as u8,
+            (src_alpha.mul_add(src_pixel[1] as f32, inv_alpha * dst_pixel[1] as f32)).round() as u8,
+            (src_alpha.mul_add(src_pixel[2] as f32, inv_alpha * dst_pixel[2] as f32)).round() as u8,
             255,
         ]);
 
@@ -284,10 +353,68 @@ pub fn generate_flag(config: &FlagConfig) -> Result<(), FlagError> {
     Ok(())
 }
 
+/// Command-line arguments for the bear flag generator
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Device preset to generate wallpaper for
+    #[arg(short, long, value_enum, default_value = "desktop-4k")]
+    device: DevicePreset,
+
+    /// Custom output path (overrides default based on dimensions)
+    #[arg(short, long)]
+    output: Option<String>,
+
+    /// Custom width in pixels (overrides device preset)
+    #[arg(long)]
+    width: Option<u32>,
+
+    /// Custom height in pixels (overrides device preset)
+    #[arg(long)]
+    height: Option<u32>,
+
+    /// Size of the bear paw as a fraction of flag height (0.01-1.0)
+    #[arg(long, default_value = "0.35")]
+    paw_size: f32,
+
+    /// Place paw in bottom-left instead of center
+    #[arg(long)]
+    bottom_left: bool,
+}
+
 fn main() -> Result<(), FlagError> {
-    let config = FlagConfig::default();
+    let cli = Cli::parse();
+
+    let mut config = if let (Some(width), Some(height)) = (cli.width, cli.height) {
+        // Custom dimensions override device preset
+        FlagConfig {
+            width,
+            height,
+            output_path: format!("bear_flag_{}x{}.png", width, height),
+            paw_size_ratio: cli.paw_size,
+            center_paw: !cli.bottom_left,
+        }
+    } else {
+        // Use device preset
+        let mut cfg = FlagConfig::from_preset(cli.device);
+        cfg.paw_size_ratio = cli.paw_size;
+        cfg.center_paw = !cli.bottom_left;
+        cfg
+    };
+
+    // Apply custom output path if provided
+    if let Some(output) = cli.output {
+        config.output_path = output;
+    }
+
+    let device_name = if cli.width.is_some() && cli.height.is_some() {
+        "Custom".to_string()
+    } else {
+        cli.device.display_name().to_string()
+    };
 
     println!("Generating gay bear pride flag...");
+    println!("  Device: {}", device_name);
     println!("  Dimensions: {}x{}", config.width, config.height);
     println!("  Output: {}", config.output_path);
     println!(
@@ -401,5 +528,110 @@ mod tests {
             blended_pixel[2] > 0,
             "Blue channel should have contribution"
         );
+    }
+
+    #[test]
+    fn test_device_preset_iphone_14_pro_max() {
+        let (width, height) = DevicePreset::IPhone14ProMax.into();
+        assert_eq!(width, 2796);
+        assert_eq!(height, 1290);
+    }
+
+    #[test]
+    fn test_device_preset_iphone_14_pro() {
+        let (width, height) = DevicePreset::IPhone14Pro.into();
+        assert_eq!(width, 2556);
+        assert_eq!(height, 1179);
+    }
+
+    #[test]
+    fn test_device_preset_iphone_14() {
+        let (width, height) = DevicePreset::IPhone14.into();
+        assert_eq!(width, 2532);
+        assert_eq!(height, 1170);
+    }
+
+    #[test]
+    fn test_device_preset_iphone_se() {
+        let (width, height) = DevicePreset::IPhoneSE.into();
+        assert_eq!(width, 1334);
+        assert_eq!(height, 750);
+    }
+
+    #[test]
+    fn test_device_preset_desktop_4k() {
+        let (width, height) = DevicePreset::Desktop4K.into();
+        assert_eq!(width, 3840);
+        assert_eq!(height, 2160);
+    }
+
+    #[test]
+    fn test_device_preset_desktop_1440p() {
+        let (width, height) = DevicePreset::Desktop1440p.into();
+        assert_eq!(width, 2560);
+        assert_eq!(height, 1440);
+    }
+
+    #[test]
+    fn test_device_preset_desktop_1080p() {
+        let (width, height) = DevicePreset::Desktop1080p.into();
+        assert_eq!(width, 1920);
+        assert_eq!(height, 1080);
+    }
+
+    #[test]
+    fn test_flag_config_from_preset() {
+        let config = FlagConfig::from_preset(DevicePreset::IPhone14ProMax);
+        assert_eq!(config.width, 2796);
+        assert_eq!(config.height, 1290);
+        assert_eq!(config.paw_size_ratio, 0.35);
+        assert!(config.center_paw);
+        assert_eq!(config.output_path, "bear_flag_2796x1290.png");
+    }
+
+    #[test]
+    fn test_flag_config_from_preset_desktop_1080p() {
+        let config = FlagConfig::from_preset(DevicePreset::Desktop1080p);
+        assert_eq!(config.width, 1920);
+        assert_eq!(config.height, 1080);
+        assert_eq!(config.output_path, "bear_flag_1920x1080.png");
+    }
+
+    #[test]
+    fn test_device_preset_display_names() {
+        assert_eq!(
+            DevicePreset::IPhone14ProMax.display_name(),
+            "iPhone 14/13/12 Pro Max"
+        );
+        assert_eq!(
+            DevicePreset::IPhone14Pro.display_name(),
+            "iPhone 14/13/12 Pro"
+        );
+        assert_eq!(DevicePreset::IPhone14.display_name(), "iPhone 14/13/12");
+        assert_eq!(DevicePreset::IPhoneSE.display_name(), "iPhone SE (3rd gen)");
+        assert_eq!(DevicePreset::Desktop4K.display_name(), "Desktop 4K");
+        assert_eq!(DevicePreset::Desktop1440p.display_name(), "Desktop 1440p");
+        assert_eq!(DevicePreset::Desktop1080p.display_name(), "Desktop 1080p");
+    }
+
+    #[test]
+    fn test_generate_flag_iphone_preset() {
+        let config = FlagConfig {
+            width: 1334,
+            height: 750,
+            output_path: "test_flag_iphone.png".to_string(),
+            paw_size_ratio: 0.3,
+            center_paw: true,
+        };
+
+        let result = generate_flag(&config);
+        assert!(
+            result.is_ok(),
+            "iPhone flag generation failed: {:?}",
+            result.err()
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_file(&config.output_path);
     }
 }
